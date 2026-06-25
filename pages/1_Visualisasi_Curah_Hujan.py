@@ -3,14 +3,13 @@ import streamlit as st
 import folium
 from folium.plugins import HeatMap, MarkerCluster
 from streamlit_folium import st_folium
-from utils import load_data
+from utils import category_counts, load_data, safe_cut
 
 st.set_page_config(page_title="Visual Curah Hujan", page_icon="🗺️", layout="wide")
 
 st.title("Visual Curah Hujan")
 st.write("Peta interaktif menampilkan titik-titik curah hujan dengan klasifikasi `CH`.")
 
-df = load_data()
 ch_bins = [-1, 10, 20, 50, 75, 100, 150, 200, 300, float('inf')]
 ch_labels = [
     '0-10 mm (Sangat Rendah)',
@@ -35,7 +34,28 @@ ch_colors = {
     '>300 mm (Ekstrem)': '#006400',
 }
 
-df['CH_category'] = pd.cut(df['CH'], bins=ch_bins, labels=ch_labels, right=True)
+try:
+    df = load_data()
+except Exception as exc:
+    st.error(f"Data tidak dapat dimuat: {exc}")
+    st.stop()
+
+if df.empty:
+    st.warning("Data kosong setelah validasi. Periksa sumber data.")
+    st.stop()
+
+if 'CH' not in df.columns:
+    st.error('Kolom CH tidak ditemukan dalam data.')
+    st.stop()
+
+if df['CH'].isna().all():
+    st.warning('Semua nilai CH kosong. Tidak ada visualisasi yang dapat ditampilkan.')
+    st.stop()
+
+if df['LAT'].isna().all() or df['LON'].isna().all():
+    st.warning('Koordinat lokasi tidak lengkap. Peta tidak dapat ditampilkan.')
+
+df['CH_category'] = safe_cut(df['CH'], bins=ch_bins, labels=ch_labels)
 
 min_ch, max_ch = float(df['CH'].min()), float(df['CH'].max())
 ch_range = st.sidebar.slider(

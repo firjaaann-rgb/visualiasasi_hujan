@@ -1,15 +1,12 @@
 import pandas as pd
 import streamlit as st
 import plotly.express as px
-from utils import load_data
+from utils import category_counts, load_data, safe_cut
 
 st.set_page_config(page_title="Visual Sifat Hujan", page_icon="📊", layout="wide")
 
 st.title("Visual Sifat Hujan")
 st.write("Analisis sifat hujan berdasarkan `SH%` dan klasifikasi `SH%`.")
-
-
-df = load_data()
 
 sh_bins = [-1, 30, 50, 84, 115, 150, 200, float('inf')]
 sh_labels = [
@@ -31,16 +28,34 @@ sh_colors = {
     '>200% (Sangat Tinggi)': '#1B5E20',
 }
 
+try:
+    df = load_data()
+except Exception as exc:
+    st.error(f"Data tidak dapat dimuat: {exc}")
+    st.stop()
+
+if df.empty:
+    st.warning("Data kosong setelah validasi. Tidak ada visualisasi yang dapat ditampilkan.")
+    st.stop()
+
+if 'SH%' not in df.columns:
+    st.error('Kolom SH% tidak ditemukan dalam data.')
+    st.stop()
+
+if df['SH%'].isna().all():
+    st.warning('Semua nilai SH% kosong. Tidak ada visualisasi yang dapat ditampilkan.')
+    st.stop()
+
 filtered = df.copy()
-filtered['SH_category'] = pd.cut(filtered['SH%'], bins=sh_bins, labels=sh_labels, right=True)
+filtered['SH_category'] = safe_cut(filtered['SH%'], bins=sh_bins, labels=sh_labels)
 
 st.sidebar.header('Filter Visualisasi')
 selected_sh = st.sidebar.multiselect('Pilih kategori SH%', sh_labels, default=sh_labels)
-filtered = filtered[filtered['SH_category'].isin(selected_sh)]
+filtered = filtered[filtered['SH_category'].isin(selected_sh)].copy()
 
 st.write(f"Menampilkan **{len(filtered):,}** titik setelah filter.")
 
-if len(filtered) == 0:
+if filtered.empty:
     st.warning('Tidak ada data yang cocok dengan filter saat ini.')
 else:
     legend_html = '<div style="line-height:1.8;">'
@@ -52,14 +67,17 @@ else:
     st.markdown('### Legenda Kategori SH%', unsafe_allow_html=True)
     st.markdown(legend_html, unsafe_allow_html=True)
 
+    hist_df = category_counts(filtered, 'SH_category', sh_labels)
+
     fig_sh_hist = px.bar(
-        filtered['SH_category'].value_counts().reindex(sh_labels).reset_index(name='Jumlah'),
-        x='index',
+        hist_df,
+        x='SH_category',
         y='Jumlah',
-        title='Jumlah Titik per Kategori SH%',
-        labels={'index': 'Kategori SH%', 'Jumlah': 'Jumlah Titik'},
-        color='index',
+        color='SH_category',
         color_discrete_map=sh_colors,
+        category_orders={'SH_category': sh_labels},
+        title='Jumlah Titik per Kategori SH%',
+        labels={'SH_category': 'Kategori SH%', 'Jumlah': 'Jumlah Titik'},
         template='plotly_white',
     )
 
@@ -68,8 +86,8 @@ else:
         x='SH%',
         y='SHpercentil',
         color='SH_category',
-        category_orders={'SH_category': sh_labels},
         color_discrete_map=sh_colors,
+        category_orders={'SH_category': sh_labels},
         title='SH% vs SHpercentil dengan Klasifikasi SH%',
         labels={'SH%': 'SH%', 'SHpercentil': 'SHpercentil', 'SH_category': 'Kategori SH%'},
         hover_data=['LON', 'LAT', 'CH', 'AnomCH'],
@@ -81,8 +99,8 @@ else:
         x='SH%',
         y='AnomCH',
         color='SH_category',
-        category_orders={'SH_category': sh_labels},
         color_discrete_map=sh_colors,
+        category_orders={'SH_category': sh_labels},
         title='SH% vs AnomCH dengan Klasifikasi SH%',
         labels={'SH%': 'SH%', 'AnomCH': 'AnomCH', 'SH_category': 'Kategori SH%'},
         hover_data=['LON', 'LAT', 'CH', 'SHpercentil'],
@@ -94,10 +112,7 @@ else:
     col2.plotly_chart(fig_sh_scatter, use_container_width=True)
     st.plotly_chart(fig_sh_anom, use_container_width=True)
 
+    stats_df = filtered.groupby('SH_category', observed=False)[['SH%', 'SHpercentil', 'CH', 'AnomCH']].agg(['count', 'mean', 'median'])
+    stats_df.columns = ['_'.join(col).strip() for col in stats_df.columns]
     st.markdown('### Statistik Kategori SH%')
-    st.dataframe(
-        filtered.groupby('SH_category')[['SH%', 'SHpercentil', 'CH', 'AnomCH']]
-        .agg(['count', 'mean', 'median'])
-        .round(2)
-        .sort_index()
-    )
+    st.dataframe(stats_df.round(2))
